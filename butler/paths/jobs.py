@@ -16,7 +16,8 @@ from butler import paths as P
 from butler.paths.ctx import Cancelled, Ctx, DraftMade, PathBlocked
 
 DEFAULT_ATTEMPTS = 3
-NO_RETRY = {"no_device", "locked", "quiet_hours", "rate_limit", "blocklisted", "already_sent", "needs_confirm", "bad_request"}
+NO_RETRY = {"no_device", "locked", "quiet_hours", "rate_limit", "blocklisted", "already_sent", "needs_confirm", "bad_request",
+            "text_only_unavailable", "photo_permission", "not_enough_photos", "wechat_crash_guard"}
 
 
 class JobManager:
@@ -91,7 +92,9 @@ class JobManager:
 
     def _recover(self, spec, ctx: Ctx, attempt: int) -> None:
         """两次尝试之间的复位：第一次失败先用模块 reset 回一级页；再失败（或 reset 自己失败）就杀掉重开 App。"""
-        if attempt >= 2:
+        # App 模块可声明 RESTART_OK = False：杀进程会触发它自己的异常保护（微信「连续异常」修复页），只用 reset 复位
+        restart_ok = getattr(__import__("sys").modules.get(spec.fn.__module__), "RESTART_OK", True)
+        if attempt >= 2 and restart_ok:
             try:
                 ctx.restart_app()
             except Exception as e:  # noqa: BLE001
@@ -103,7 +106,7 @@ class JobManager:
             reset(ctx)
         except Exception as e:  # noqa: BLE001
             ctx.note(f"reset 失败：{type(e).__name__}: {e}"[:200])
-            if attempt < 2:
+            if attempt < 2 and restart_ok:
                 try:
                     ctx.restart_app()
                 except Exception as e2:  # noqa: BLE001

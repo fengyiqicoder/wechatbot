@@ -485,5 +485,15 @@ class Ctx:
         if self.ledger is not None:
             self.ledger.record(self.spec.app, kind, target, content, extra)
 
+    def onscreen_texts(self) -> list[dict]:
+        """只读兜底：直接读 AX 源，连同被误报为不可见、但矩形在屏内的元素一起返回（不进记忆、不用于点击）。"""
+        from engine.ax import parse_elements
+        drv = self.actions.provider()
+        if drv is None:
+            return []
+        w, h = drv.window_size()
+        return [{"tag": e.tag, "name": e.name, "label": e.label, "value": e.value, "rect": [e.x, e.y, e.width, e.height]}
+                for e in parse_elements(drv.source(), hidden_within=(w, h))]
+
     def shot(self) -> str | None:
         return self.last.get("screenshot")

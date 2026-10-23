@@ -4,6 +4,6 @@ facebook-wda==1.4.*
 pymobiledevice3==4.*
 requests==2.32.*
 pillow>=10
-mcp>=1.2
+mcp>=1.2,<2
 pytest==8.*
 httpx>=0.28,<1

@@ -134,7 +134,8 @@ def wechat_status() -> str:
 
 @mcp.tool()
 def wechat_inbox(n: int = 20, unread_only: bool = False) -> str:
-    """会话列表：每行有标题（联系人/群名）、最后一条预览、时间、未读数。unread_only=True 只看有未读的。"""
+    """会话列表：每行有标题（联系人/群名）、最后一条预览、时间、未读数。unread_only=True 只看有未读的。
+    手机端真实操作，单次约 20-60 秒，不要并发调用。"""
     return _fmt(_job("inbox", {"n": n, "unread_only": unread_only}))
 
 
@@ -167,7 +168,8 @@ def wechat_contact_card(contact: str) -> str:
 
 @mcp.tool()
 def wechat_moments(n: int = 10, contact: str = "") -> str:
-    """朋友圈动态（作者、文字、图片数、时间）。给 contact 就只看这个人的朋友圈。"""
+    """朋友圈动态（作者、文字、时间）。发现页开着「朋友圈」时读好友信息流；关掉了就读主人自己的朋友圈相册。
+    给 contact 就只看这个人的朋友圈。翻页读取，约 1-2 分钟。"""
     if contact:
         return _fmt(_job("moments_of", {"contact": contact, "n": n}))
     return _fmt(_job("moments", {"n": n}))

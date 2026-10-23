@@ -14,6 +14,9 @@ from butler import paths as P
 from butler.paths.ctx import Ctx, PathBlocked, center, find, find_contains, names
 
 APP = "wechat"
+# 短时间内连续杀进程，微信会以为自己在崩溃，启动后停在「微信连续异常，可以尝试以下修复」页（下一步是清缓存修复，绝不能点）。
+# 所以失败后只用 to_root 复位，不杀进程；真遇到这一页，正常重开一次就会消失。
+RESTART_OK = False
 TABS = {"微信": "微信", "通讯录": "通讯录", "发现": "发现", "我": "我"}
 VOICE_RE = re.compile(r"^(.+?),语音,(\d+)''(?:,(.*))?$")
 KIND_RE = {
@@ -35,6 +38,19 @@ def _drawer_open(d: dict) -> bool:
                 or find_contains(d, "刚刚看过的直播"))
 
 
+def _crash_guard(ctx: Ctx, d: dict) -> bool:
+    """微信「连续异常」保护页：正常重开一次（不点「下一步」）。处理了返回 True。"""
+    if not find_contains(d, "微信连续异常"):
+        return False
+    if getattr(ctx, "_crash_reopened", False):
+        raise PathBlocked("wechat_crash_guard", {"hint": "微信停在「连续异常」修复页，重开后仍在：请在手机上手动打开一次微信",
+                                                 "screenshot": d.get("screenshot")})
+    ctx._crash_reopened = True
+    ctx.note("微信在「连续异常」保护页，正常重开一次")
+    ctx.restart_app(settle=6.0)
+    return True
+
+
 def _tab_active(d: dict, tab: str) -> bool:
     e = find(d, tab, "Button")
     return bool(e) and (e.get("value") == "1" or e.get("value") == 1)
@@ -44,6 +60,8 @@ def goto_tab(ctx: Ctx, tab: str, tries: int = 3) -> dict:
     """切到底部标签并验证（value=1 表示选中）。若当前不在一级页，先 back 几次。"""
     for i in range(tries):
         d = ctx.screen()
+        if _crash_guard(ctx, d):
+            continue
         if _drawer_open(d):
             ctx.swipe("up")
             ctx.wait(1.2)
@@ -99,16 +117,17 @@ def list_top(ctx: Ctx, marker: str, tag: str | None = None, tries: int = 6) -> d
 def to_root(ctx: Ctx, max_back: int = 6) -> dict:
     for _ in range(max_back):
         d = ctx.screen()
+        if _crash_guard(ctx, d):
+            continue
         if _drawer_open(d):
             ctx.swipe("up")
             ctx.wait(1.2)
             continue
         if find(d, "标签页栏", "TabBar") and not find(d, "返回", "Button"):
             return d
-        if find(d, "返回", "Button"):
-            ctx.tap("返回", soft=True)
-        elif find(d, "取消", "Button"):
-            ctx.tap("取消", soft=True)
+        btn = find(d, "返回", "Button") or find(d, "取消", "Button") or find(d, "关闭", "Button")
+        if btn is not None:
+            ctx.tap_el(btn, soft=True)          # 按元素点：「取消」常有同名 StaticText，按名字会判歧义
         else:
             ctx.back()
         ctx.wait(1.2)
@@ -283,20 +302,28 @@ def open_keyboard(ctx: Ctx) -> bool:
         ns = set(names(d))
         if "Send" in ns or "发送" in ns:
             return True
-        target = "文本" if "文本" in ns else ("语音" if "语音" in ns else None)
-        if target is None:
+        # 文字态：输入框是个 TextView（占位「可按住 转文字」），点它才弹键盘。
+        # 不能点「语音」：那会切成「按住 说话」。语音态时左下角显示「文本」，点它回文字态。
+        tvs = [e for e in d.get("elements", []) if e.get("tag") == "TextView" and e["rect"][1] > 400]
+        if tvs:
+            ctx.tap_el(max(tvs, key=lambda e: e["rect"][1]), soft=True)
+        elif "文本" in ns:
+            ctx.tap("文本", expect="screen_change", soft=True)
+        else:
             return False
-        ctx.tap(target, expect="screen_change", soft=True)
         ctx.wait(1.5)
-    return "Send" in set(names(ctx.screen()))
+    ns = set(names(ctx.screen()))
+    return "Send" in ns or "发送" in ns
 
 
 def type_and_send(ctx: Ctx, text: str) -> bool:
     if not open_keyboard(ctx):
         raise PathBlocked("no_keyboard", {"hint": "切不到键盘输入态"})
+    ensure_english_keyboard(ctx)                    # 拼音键盘会吞掉英文字母
     ctx.type(text)
     ctx.wait(1.0)
-    ctx.tap("Send", confirm=True, expect="screen_change", soft=True)
+    ns = set(names(ctx.screen()))
+    ctx.tap("Send" if "Send" in ns else "发送", confirm=True, expect="screen_change", soft=True)
     ctx.wait(2.5)
     return any(m["who"] == "我" and text in m["text"] for m in parse_messages(ctx.screen()))
 
@@ -426,7 +453,10 @@ def moments(ctx: Ctx, n: int = 20):
     _open_moments_feed(ctx)
 
     def extract(d):
-        return _moment_rows(d)
+        rows = _moment_rows(d)
+        if not rows and not any(e.get("tag") == "Cell" for e in d.get("elements", [])):
+            rows = _moment_rows({"elements": ctx.onscreen_texts()})     # 自己的相册：动态行被误报为不可见
+        return rows
     ctx.collect(extract, lambda r: r["id"], int(n), stall=2)
     to_root(ctx)
 
@@ -450,7 +480,7 @@ def _open_moments_feed(ctx: Ctx) -> dict:
     return ctx.screen()
 
 
-_ALBUM_SKIP = {"发表", "私密发表", "今天", "Anna"}
+_ALBUM_SKIP = {"发表", "私密发表", "今天"}
 
 
 def _moment_rows(d: dict) -> list[dict]:
@@ -463,13 +493,22 @@ def _moment_rows(d: dict) -> list[dict]:
             out.append({"id": f"moment:{parts[0]}:{','.join(parts[1:])[:40]}", "author": parts[0],
                         "text": ",".join(parts[1:]), "rect": e["rect"]})
         return out
-    date = None
+    date = year = None
     for e in sorted([e for e in d.get("elements", []) if e.get("tag") == "StaticText"], key=lambda e: e["rect"][1]):
         t = (e.get("name") or e.get("label") or "").strip()
         if not t or t in _ALBUM_SKIP or e["rect"][1] < 200:
             continue
-        if re.fullmatch(r"\d{4}年|\d{1,2}月\d{1,2}日|昨天|今天", t):
+        if re.fullmatch(r"\d{4}年", t):
+            year = t
+            continue
+        if re.fullmatch(r"\d{1,2}月\d{1,2}日|昨天|今天", t):
             date = t
+            continue
+        m = re.fullmatch(r"(\d{1,2}) (\d{1,2})月", t)                  # 相册日期行：「08 5月」
+        if m:
+            date = f"{year or ''}{int(m.group(2))}月{int(m.group(1))}日"
+            continue
+        if date is None:                                          # 日期行之前是头像、昵称、发表入口
             continue
         out.append({"id": f"album:{date}:{t[:40]}", "author": "我", "date": date, "text": t, "rect": e["rect"]})
     return out
@@ -739,29 +778,40 @@ def recall(ctx: Ctx, contact: str, match: str, mode: str = "draft"):
 @P.path(APP, "chat_setting", kind="action", writes=True, doc="会话设置开关：置顶聊天 / 消息免打扰",
         params={"contact": "会话", "setting": "置顶聊天|消息免打扰", "on": "true/false", "mode": "draft|send"})
 def chat_setting(ctx: Ctx, contact: str, setting: str, on: bool = True, mode: str = "draft"):
+    if setting not in ("置顶聊天", "消息免打扰"):
+        raise PathBlocked("bad_request", {"hint": "setting 只能是「置顶聊天」或「消息免打扰」"})
     ctx.draft_or_go(mode, f"微信 {contact} {setting}={on}", {"contact": contact, "setting": setting, "on": on})
     open_chat(ctx, contact)
-    ctx.tap("更多", expect="screen_change")
-    ctx.wait(2.0)
     d = ctx.screen()
-    sw = None
-    for _ in range(4):
-        sw = next((e for e in d.get("elements", []) if e.get("tag") == "Switch" and setting in (e.get("name") or e.get("label") or "")), None)
-        if sw:
-            break
-        ctx.swipe("up")
-        ctx.wait(1.0)
-        d = ctx.screen()
+    more = next((e for e in d.get("elements", []) if e.get("tag") == "Button" and e.get("name") == "更多"
+                 and e["rect"][1] < 120), None)                 # 右上角「更多」；输入框旁还有一个同名的
+    if more is None:
+        raise PathBlocked("not_found", {"target": "聊天详情入口", "screenshot": d.get("screenshot")})
+    ctx.tap_el(more, expect="screen_change")
+    ctx.wait(2.0)
+
+    def switch_row(d):
+        # 开关名字都是「--」：按同一行的文字找。开关矩形占满整行，真正的拨钮在右侧
+        lab = find(d, setting, "StaticText")
+        if lab is None:
+            return None
+        cy = lab["rect"][1] + lab["rect"][3] / 2
+        return next((e for e in d.get("elements", []) if e.get("tag") == "Switch"
+                     and e["rect"][1] <= cy <= e["rect"][1] + e["rect"][3]), None)
+
+    sw = switch_row(ctx.screen())
     if sw is None:
-        raise PathBlocked("not_found", {"setting": setting})
-    cur = str(sw.get("value")) in ("1", "true", "True")
-    if cur != bool(on):
-        ctx.tap_el(sw, confirm=True, soft=True)
+        raise PathBlocked("not_found", {"setting": setting, "screenshot": ctx.last.get("screenshot")})
+    if (str(sw.get("value")) == "1") != bool(on):
+        x, y, w, h = sw["rect"]
+        ctx.tap(x=x + w - 45, y=y + h // 2, confirm=True, soft=True)
         ctx.wait(1.5)
-        d = ctx.screen()
-        sw = next((e for e in d.get("elements", []) if e.get("tag") == "Switch" and setting in (e.get("name") or e.get("label") or "")), sw)
+        sw = switch_row(ctx.screen()) or sw
+    state = str(sw.get("value")) == "1"
     to_root(ctx)
-    return {"setting": setting, "on": str(sw.get("value")) in ("1", "true", "True")}
+    if state != bool(on):
+        raise PathBlocked("verify_failed", {"setting": setting, "want": bool(on), "got": state})
+    return {"contact": contact, "setting": setting, "on": state}
 
 
 @P.path(APP, "post_moment", kind="action", writes=True, doc="发朋友圈：文字 + 相册最近 photos 张图（0=纯文字）",
@@ -769,53 +819,82 @@ def chat_setting(ctx: Ctx, contact: str, setting: str, on: bool = True, mode: st
 def post_moment(ctx: Ctx, text: str, photos: int = 1, mode: str = "draft", private: bool = False):
     ctx.draft_or_go(mode, f"发朋友圈{'（私密）' if private else ''}: {text[:40]} + {photos} 图",
                     {"text": text, "photos": photos, "private": private})
+    photos = max(0, min(int(photos), 9))
     _open_moments_feed(ctx)
     d = ctx.screen()
     cam = (find(d, "私密发表", "StaticText") if private else None) or find(d, "发表", "StaticText") \
         or find(d, "拍照分享", "Button") or find_contains(d, "拍照", "Button")
     if cam is None:
         raise PathBlocked("not_found", {"target": "朋友圈发表入口", "screenshot": d.get("screenshot")})
-    if photos <= 0 and cam.get("tag") == "Button":
+    if photos <= 0 and cam.get("tag") != "Button":
+        # 自己的相册页只有「拍摄 / 从手机相册选择」，没有纯文字入口；纯文字要从好友信息流右上角相机长按
+        to_root(ctx)
+        raise PathBlocked("text_only_unavailable", {"hint": "发现页没开朋友圈，只能带图发（photos≥1）；"
+                                                            "或在 微信 → 我 → 设置 → 通用 → 发现页管理 打开朋友圈"})
+    if photos <= 0:
         ctx.act(op="long_press", x=center(cam)[0], y=center(cam)[1], soft=True)
     else:
         ctx.tap_el(cam, expect="screen_change")
     ctx.wait(1.5)
-    d = ctx.screen()
     if photos > 0:
-        pick = find(d, "从相册选择") or find_contains(d, "相册")
-        if pick:
-            ctx.tap_el(pick, expect="screen_change")
-            ctx.wait(2.5)
-            d = ctx.screen()
-        cells = sorted([e for e in d.get("elements", []) if e.get("tag") in ("Cell", "Image", "Button")
-                        and 90 < e["rect"][1] < 780 and 60 < e["rect"][2] < 200 and abs(e["rect"][2] - e["rect"][3]) < 20],
-                       key=lambda e: (e["rect"][1], e["rect"][0]))
-        for c in cells[:photos]:
-            ctx.tap_el(c, soft=True)
-            ctx.wait(0.8)
-        d = ctx.screen()
-        nxt = find(d, "完成", "Button") or find(d, "下一步", "Button") or find_contains(d, "完成", "Button")
-        if nxt is None:
-            raise PathBlocked("not_found", {"target": "完成", "screenshot": d.get("screenshot")})
-        ctx.tap_el(nxt, expect="screen_change")
-        ctx.wait(2.0)
+        _pick_recent_photos(ctx, photos)
     d = ctx.screen()
     tv = next((e for e in d.get("elements", []) if e.get("tag") == "TextView"), None)
-    if tv:
+    if tv is None:
+        raise PathBlocked("not_found", {"target": "朋友圈编辑框", "screenshot": d.get("screenshot")})
+    if text:
         ctx.tap_el(tv, soft=True)
         ctx.wait(0.8)
-    ctx.type(text)
-    ctx.wait(1.0)
+        ctx.type(text)
+        ctx.wait(1.0)
     d = ctx.screen()
-    pub = find(d, "发表", "Button") or find_contains(d, "发表", "Button")
+    pub = find(d, "私密发表", "Button") or find(d, "发表", "Button") or find_contains(d, "发表", "Button")
     if pub is None:
         raise PathBlocked("not_found", {"target": "发表", "screenshot": d.get("screenshot")})
     ctx.tap_el(pub, confirm=True, expect="screen_change")
     ctx.wait(4.0)
     d = ctx.screen()
-    ok = any(text[:10] in (e.get("name") or "") for e in d.get("elements", []))
+    probe = (text or "")[:10]
+    ok = not probe or any(probe in (e.get("name") or "") for e in d.get("elements", []) + ctx.onscreen_texts())
+    shot = d.get("screenshot")
     to_root(ctx)
-    return {"posted": ok, "text": text, "screenshot": d.get("screenshot")}
+    if not ok:
+        raise PathBlocked("post_unverified", {"hint": "点了发表但相册/信息流里没读回", "screenshot": shot})
+    return {"posted": True, "text": text, "photos": photos, "private": private, "screenshot": shot}
+
+
+def _pick_recent_photos(ctx: Ctx, photos: int) -> None:
+    """发表面板 → 从手机相册选择 → 勾选最新的 photos 张照片（网格最底下）→ 完成。"""
+    d = ctx.screen()
+    pick = find(d, "从手机相册选择", "Button") or find_contains(d, "相册选择")
+    if pick is None:
+        raise PathBlocked("not_found", {"target": "从手机相册选择", "screenshot": d.get("screenshot")})
+    ctx.tap_el(pick, expect="screen_change")
+    ctx.wait(2.5)
+    d = ctx.screen()
+    if find_contains(d, "允许完全访问", "Button"):
+        # 系统隐私授权由主人自己决定，不替他点
+        raise PathBlocked("photo_permission", {"hint": "微信还没有相册权限：在 iPhone 上 设置 → 微信 → 照片 → 完全访问，然后重试",
+                                               "screenshot": d.get("screenshot")})
+    seen, imgs = set(), []
+    for e in d.get("elements", []):
+        nm = e.get("name") or ""
+        if e.get("tag") == "Image" and nm.startswith("照片") and tuple(e["rect"]) not in seen:
+            seen.add(tuple(e["rect"]))
+            imgs.append(e)
+    if len(imgs) < photos:
+        raise PathBlocked("not_enough_photos", {"want": photos, "have": len(imgs), "screenshot": d.get("screenshot")})
+    imgs.sort(key=lambda e: (e["rect"][1], e["rect"][0]))
+    for e in imgs[-photos:]:
+        x, y, w, h = e["rect"]
+        ctx.tap(x=x + w - 20, y=y + 20, soft=True)                  # 右上角选择圈；点中间会进大图预览
+        ctx.wait(0.8)
+    d = ctx.screen()
+    done = find(d, "完成", "Button") or find_contains(d, "完成", "Button")
+    if done is None:
+        raise PathBlocked("not_found", {"target": "完成", "screenshot": d.get("screenshot")})
+    ctx.tap_el(done, expect="screen_change")
+    ctx.wait(2.0)
 
 
 @P.path(APP, "moment_react", kind="action", writes=True, doc="给朋友圈第一条含 match 的动态点赞或评论",

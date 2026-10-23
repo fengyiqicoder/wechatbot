@@ -20,7 +20,9 @@ class AXElement:
         return (self.x + self.width // 2, self.y + self.height // 2)
 
 
-def parse_elements(xml_source: str) -> list["AXElement"]:
+def parse_elements(xml_source: str, hidden_within: tuple[int, int] | None = None) -> list["AXElement"]:
+    """hidden_within=(w, h)：把 visible=false 但矩形整个落在屏幕内的元素也收进来。
+    微信朋友圈相册等列表会把屏上可见的行误报为 visible=false；只给只读抽取用，点击定位不要传。"""
     if not xml_source:
         return []
     try:
@@ -30,7 +32,11 @@ def parse_elements(xml_source: str) -> list["AXElement"]:
     out = []
     for el in root.iter():
         if (el.get("visible") or "true") != "true":
-            continue
+            if hidden_within is None:
+                continue
+            x, y, w, h = (int(el.get(k) or 0) for k in ("x", "y", "width", "height"))
+            if not (w > 0 and h > 0 and x >= 0 and y >= 0 and x + w <= hidden_within[0] and y + h <= hidden_within[1]):
+                continue
         label = (el.get("label") or "").strip()
         name = (el.get("name") or "").strip()
         if not label and not name:
