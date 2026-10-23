@@ -1,0 +1,296 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>微信管家 · 一键 AI 接管微信</title>
+<meta name="description" content="让 Claude 直接操作你 iPhone 上的真实微信：读未读、按你的口吻代回、汇报。开源，数据只在你的 Mac 上。">
+<meta property="og:title" content="微信管家：一键 AI 接管微信">
+<meta property="og:description" content="让 Claude 直接操作你 iPhone 上的真实微信：读未读、按你的口吻代回、汇报。">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'><rect width='64' height='64' rx='14' fill='%2307C160'/><path d='M14 20h36a4 4 0 0 1 4 4v16a4 4 0 0 1-4 4H30l-10 8v-8h-6a4 4 0 0 1-4-4V24a4 4 0 0 1 4-4z' fill='%23fff'/></svg>">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@400;500;700;900&display=swap" rel="stylesheet">
+<style>
+:root{
+  --bg:#EDEDED;        /* 聊天背景灰 */
+  --ink:#191919;
+  --muted:#7A7A7A;
+  --line:#DADADA;
+  --white:#FFFFFF;
+  --bubble:#95EC69;    /* 自己发出的气泡 */
+  --green:#07C160;
+  --green-ink:#05994C;
+  --code:#1F1F1F;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html{-webkit-text-size-adjust:100%}
+body{background:var(--bg);color:var(--ink);font-family:"Noto Sans SC",-apple-system,"PingFang SC",sans-serif;font-size:17px;line-height:1.7}
+a{color:inherit}
+:focus-visible{outline:3px solid var(--green);outline-offset:3px;border-radius:6px}
+.wrap{max-width:1120px;margin:0 auto;padding:0 24px}
+
+/* 顶栏 */
+.top{display:flex;justify-content:space-between;align-items:center;padding:22px 0}
+.brand{display:flex;gap:10px;align-items:center;font-weight:700;font-size:17px;text-decoration:none}
+.brand svg{width:28px;height:28px}
+.top nav a{text-decoration:none;color:var(--muted);margin-left:22px;font-size:15px}
+.top nav a:hover{color:var(--ink)}
+
+/* 首屏 */
+.hero{display:grid;grid-template-columns:1.1fr .9fr;gap:56px;align-items:center;padding:40px 0 88px}
+h1{font-weight:900;font-size:clamp(52px,7.4vw,96px);line-height:1.04;letter-spacing:-.02em}
+h1 .k{display:block}
+.lede{margin-top:26px;font-size:19px;color:#3d3d3d;max-width:30em}
+.install{margin-top:36px;background:var(--code);color:#EDEDED;border-radius:14px;padding:18px 18px 16px;max-width:560px}
+.install p{font-size:13.5px;color:#9a9a9a;margin-bottom:10px}
+.install pre{white-space:pre-wrap;word-break:break-all;font-family:"Noto Sans SC",sans-serif;font-size:15px;line-height:1.65}
+.copy{margin-top:14px;display:inline-flex;align-items:center;gap:8px;background:var(--green);color:#fff;border:0;border-radius:8px;padding:10px 18px;font:inherit;font-size:15px;font-weight:700;cursor:pointer}
+.copy:hover{background:var(--green-ink)}
+.copy.done{background:#3a3a3a}
+.need{margin-top:14px;font-size:14px;color:var(--muted);max-width:560px}
+
+/* 手机 */
+.phone{justify-self:center;width:330px;height:640px;background:#111;border-radius:48px;padding:12px;box-shadow:0 30px 60px -25px rgba(0,0,0,.35)}
+.screen{position:relative;width:100%;height:100%;background:var(--bg);border-radius:37px;overflow:hidden;display:flex;flex-direction:column}
+.status{height:44px;display:flex;justify-content:space-between;align-items:flex-end;padding:0 26px 6px;font-size:13px;font-weight:700}
+.bar{height:44px;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:16px;border-bottom:1px solid var(--line);background:#EDEDED;position:relative}
+.bar .back{position:absolute;left:14px;font-weight:400;color:#333;font-size:22px;line-height:1}
+.feed{flex:1;padding:14px 12px;display:flex;flex-direction:column;gap:12px;overflow:hidden}
+.msg{display:flex;gap:8px;align-items:flex-start;max-width:100%}
+.msg .av{flex:none;width:34px;height:34px;border-radius:6px;display:grid;place-items:center;color:#fff;font-size:14px;font-weight:700}
+.msg .b{position:relative;padding:8px 11px;border-radius:6px;font-size:14.5px;line-height:1.5;max-width:210px;background:var(--white)}
+.msg.me{flex-direction:row-reverse}
+.msg.me .b{background:var(--bubble)}
+.msg.me .av{background:#3b3b3b}
+.pill{align-self:center;font-size:12px;color:#fff;background:rgba(0,0,0,.42);padding:4px 10px;border-radius:5px;text-align:center;max-width:250px}
+.pill.hold{background:#E8A33D}
+.typing .b{color:var(--muted);letter-spacing:2px}
+.inputbar{height:56px;border-top:1px solid var(--line);background:#F7F7F7;display:flex;align-items:center;gap:8px;padding:0 10px 6px}
+.inputbar .f{flex:1;height:36px;background:#fff;border-radius:6px;font-size:13px;color:var(--muted);display:flex;align-items:center;padding:0 10px}
+.inputbar .f.on{color:var(--ink)}
+.tag{position:absolute;left:50%;transform:translateX(-50%);bottom:66px;background:var(--ink);color:#fff;font-size:12px;padding:5px 11px;border-radius:999px;white-space:nowrap}
+.enter{animation:in .35s ease-out both}
+@keyframes in{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
+
+/* 段落 */
+section{padding:84px 0;border-top:1px solid var(--line)}
+h2{font-weight:900;font-size:clamp(30px,3.6vw,44px);line-height:1.2;letter-spacing:-.01em;max-width:18em}
+.sub{margin-top:14px;color:#4a4a4a;max-width:34em}
+
+/* 简报 */
+.report{margin-top:40px;background:var(--white);border-radius:16px;padding:30px 32px;max-width:720px;font-size:16px}
+.report h3{font-size:17px;font-weight:700;margin-bottom:14px}
+.report ul{list-style:none;display:grid;gap:12px}
+.report li{display:grid;grid-template-columns:84px 1fr;gap:14px}
+.report .who{font-weight:700}
+.report .st{display:inline-block;font-size:12.5px;padding:1px 8px;border-radius:4px;margin-right:6px;vertical-align:1px}
+.st.sent{background:#E3F8D6;color:#2C7A0B}
+.st.hold{background:#FCEBD0;color:#9A5B00}
+.st.skip{background:#EFEFEF;color:#666}
+
+/* 对话式能力清单 */
+.talk{margin-top:44px;display:grid;grid-template-columns:1fr 1fr;gap:28px 48px}
+.pair{display:flex;flex-direction:column;gap:10px}
+.pair .q{align-self:flex-end;background:var(--bubble);padding:10px 14px;border-radius:8px;max-width:90%;font-weight:500}
+.pair .a{align-self:flex-start;background:var(--white);padding:10px 14px;border-radius:8px;max-width:92%;color:#333;font-size:15.5px}
+.pair code{font-family:inherit;font-size:14px;background:#F0F0F0;padding:0 5px;border-radius:4px}
+
+/* 安全 */
+.rules{margin-top:40px;display:grid;grid-template-columns:repeat(2,1fr);gap:0 56px;max-width:960px}
+.rule{padding:22px 0;border-bottom:1px solid var(--line)}
+.rule b{display:block;font-size:19px;margin-bottom:6px}
+.rule span{color:#4a4a4a;font-size:16px}
+
+/* 安装步骤 */
+.steps{margin-top:40px;display:grid;gap:22px;max-width:760px;counter-reset:s;list-style:none}
+.steps li{display:grid;grid-template-columns:44px 1fr;gap:16px;counter-increment:s}
+.steps li::before{content:counter(s);width:36px;height:36px;border-radius:50%;background:var(--ink);color:#fff;display:grid;place-items:center;font-weight:700}
+.steps b{display:block;font-size:18px}
+.steps span{color:#4a4a4a;font-size:16px}
+
+.arch{margin-top:36px;background:var(--code);color:#ddd;border-radius:14px;padding:24px;overflow-x:auto;font-size:14px;line-height:1.7;max-width:760px}
+.arch pre{font-family:ui-monospace,Menlo,monospace}
+
+footer{padding:40px 0 56px;border-top:1px solid var(--line);color:var(--muted);font-size:14px;display:flex;justify-content:space-between;gap:20px;flex-wrap:wrap}
+
+@media (max-width:900px){
+  .hero{grid-template-columns:1fr;gap:48px;padding-top:16px}
+  .talk,.rules{grid-template-columns:1fr}
+}
+@media (max-width:520px){
+  .wrap{padding:0 16px}
+  body{font-size:16px}
+  .top nav a:not(.gh){display:none}
+  .phone{width:300px;height:590px}
+  .report{padding:22px 18px}
+  .report li{grid-template-columns:1fr;gap:2px}
+  section{padding:64px 0}
+}
+@media (prefers-reduced-motion:reduce){.enter{animation:none}}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header class="top">
+    <a class="brand" href="./">
+      <svg viewBox="0 0 64 64" aria-hidden="true"><rect width="64" height="64" rx="14" fill="#07C160"/><path d="M14 20h36a4 4 0 0 1 4 4v16a4 4 0 0 1-4 4H30l-10 8v-8h-6a4 4 0 0 1-4-4V24a4 4 0 0 1 4-4z" fill="#fff"/></svg>
+      微信管家
+    </a>
+    <nav><a href="#what">能做什么</a><a href="#safe">安全</a><a href="#install">安装</a><a class="gh" href="https://github.com/fengyiqicoder/wechatbot">GitHub</a></nav>
+  </header>
+
+  <main>
+  <div class="hero">
+    <div>
+      <h1><span class="k">一键 AI</span><span class="k">接管微信</span></h1>
+      <p class="lede">Claude 直接操作你 iPhone 上的真实微信：看谁找你、读上下文、用你的口吻回复，拿不准的留给你。不改微信、不登网页版，只要一根数据线。</p>
+      <div class="install">
+        <p>复制下面这段，粘贴进 Claude Code，剩下的它来装：</p>
+        <pre id="prompt">帮我安装微信管家：git clone https://github.com/fengyiqicoder/wechatbot ~/wechatbot ，然后严格按照 ~/wechatbot/INSTALL.md 一步步装好。需要我在手机或 Xcode 上点的步骤，停下来告诉我。</pre>
+        <button class="copy" id="copy" type="button">复制安装指令</button>
+      </div>
+      <p class="need">需要一台装了 Xcode 的 Mac、一部登录了微信的 iPhone 和一个 Apple ID（免费的就行）。</p>
+    </div>
+
+    <div class="phone" aria-label="演示：管家替你回复微信">
+      <div class="screen">
+        <div class="status"><span>9:41</span><span>●●● ▮</span></div>
+        <div class="bar"><span class="back">‹</span><span id="title">老妈</span></div>
+        <div class="feed" id="feed"></div>
+        <div class="tag" id="tag" hidden>管家正在回复</div>
+        <div class="inputbar"><div class="f" id="field">&nbsp;</div></div>
+      </div>
+    </div>
+  </div>
+
+  <section>
+    <h2>它替你看完所有未读，再给你一份简报</h2>
+    <p class="sub">说一句「接管我的微信」，管家先问你几句：怎么称呼你、平时怎么说话、哪些人可以直接代回。之后每隔几分钟巡视一轮，每一轮都这样跟你汇报：</p>
+    <div class="report" role="figure" aria-label="管家简报示例">
+      <h3>15:40 这一轮：4 个会话有新消息</h3>
+      <ul>
+        <li><span class="who">老妈</span><span><span class="st sent">已回</span>问周末回不回家。按你的习惯回了「回！周六中午到」。</span></li>
+        <li><span class="who">王经理</span><span><span class="st hold">等你定</span>问明早的会能不能改到 10 点。涉及你的时间安排，没替你答应。</span></li>
+        <li><span class="who">小李</span><span><span class="st hold">等你定</span>找你借 2000 块。涉及钱，留给你亲自处理。</span></li>
+        <li><span class="who">产品群</span><span><span class="st skip">没回</span>12 条闲聊，没人 @你。</span></li>
+      </ul>
+    </div>
+  </section>
+
+  <section id="what">
+    <h2>你在 Claude 里说一句，它在手机上做完</h2>
+    <div class="talk">
+      <div class="pair"><div class="q">接管我的微信</div><div class="a">巡视未读 → 读上下文 → 用你的口吻拟回复 → 名单里的人直接回，其余先给你看 → 汇报。</div></div>
+      <div class="pair"><div class="q">谁找我了？</div><div class="a">列出有未读的会话、最后一条说了什么、什么时候。</div></div>
+      <div class="pair"><div class="q">我和张三最近聊了什么</div><div class="a">打开会话往上翻，语音消息先转成文字再读。</div></div>
+      <div class="pair"><div class="q">搜一下谁提过「报销」</div><div class="a">用微信全局搜索，按联系人、群聊、聊天记录分开给你。</div></div>
+      <div class="pair"><div class="q">帮我回老妈：今晚回家吃饭</div><div class="a">先把要发的话给你确认，确认后发出，再到聊天气泡里核对一遍。</div></div>
+      <div class="pair"><div class="q">朋友圈最近有什么</div><div class="a">谁发的、写了什么、配了几张图。也能只看某一个人的朋友圈。</div></div>
+    </div>
+  </section>
+
+  <section id="safe">
+    <h2>默认谨慎，权限你给多少它用多少</h2>
+    <div class="rules">
+      <div class="rule"><b>发之前先问你</b><span>每条回复默认先给你过目。只有你明确放进「直接代回」名单的人，管家才会不问就回。</span></div>
+      <div class="rule"><b>钱和承诺不碰</b><span>借钱、转账、答应时间、敏感话题，一律标成「等你定」。</span></div>
+      <div class="rule"><b>看清楚才动手</b><span>每次点击前确认目标真的在屏幕上，点完核对结果。失败就如实告诉你，不会反复乱点。</span></div>
+      <div class="rule"><b>像人一样操作</b><span>随机停顿、分段打字。夜里 23:00 到早上 7:30 默认不动手机。</span></div>
+      <div class="rule"><b>数据不出你的 Mac</b><span>聊天记录、截图、规则都只存在本机，管家没有服务器。</span></div>
+      <div class="rule"><b>代码全部开源</b><span>MIT 许可，每一步做了什么都能在 GitHub 上看到。</span></div>
+    </div>
+  </section>
+
+  <section id="install">
+    <h2>安装：复制一段话给 Claude</h2>
+    <p class="sub">把首屏那段安装指令粘进 Claude Code。它会自己检查环境、下载代码、编译手机端驱动，只在需要你动手时停下来：</p>
+    <ol class="steps">
+      <li><div><b>连上手机</b><span>数据线连 Mac，解锁 iPhone，点「信任此电脑」。</span></div></li>
+      <li><div><b>Xcode 登录 Apple ID</b><span>Xcode → Settings → Accounts 里登录。免费 Apple ID 就够，用来给手机端驱动签名。</span></div></li>
+      <li><div><b>在 iPhone 上信任开发者</b><span>设置 → 通用 → VPN与设备管理 → 点你的 Apple ID → 信任。第一次装才需要。</span></div></li>
+      <li><div><b>重开 Claude，说「接管我的微信」</b><span>也可以输入 <code>/mcp__wechatbot__takeover</code>。</span></div></li>
+    </ol>
+    <div class="arch" role="figure" aria-label="工作原理">
+<pre>Claude ──MCP──▶ 微信管家引擎（你的 Mac，127.0.0.1）
+                  │  闸门 → 观察 → 定位 → 拟人 → 执行 → 核对
+                  ▼
+        WebDriverAgent（iPhone 上的开源测试驱动，走 USB）
+                  ▼
+           iPhone 上的微信</pre>
+    </div>
+  </section>
+  </main>
+
+  <footer>
+    <span>微信管家 WeChatBot · 开源项目，与腾讯公司无关</span>
+    <a href="https://github.com/fengyiqicoder/wechatbot">github.com/fengyiqicoder/wechatbot</a>
+  </footer>
+</div>
+
+<script>
+// 复制安装指令
+document.getElementById('copy').addEventListener('click', async e => {
+  const t = document.getElementById('prompt').textContent;
+  try { await navigator.clipboard.writeText(t); }
+  catch { const r = document.createRange(); r.selectNodeContents(document.getElementById('prompt'));
+          const s = getSelection(); s.removeAllRanges(); s.addRange(r); document.execCommand('copy'); }
+  e.target.textContent = '已复制，去粘贴给 Claude'; e.target.classList.add('done');
+  setTimeout(() => { e.target.textContent = '复制安装指令'; e.target.classList.remove('done'); }, 2600);
+});
+
+// 手机演示：三个会话轮流，管家回一条、留一条给你
+const SCENES = [
+  {title:'老妈', av:'妈', color:'#D9822B', msgs:[
+    {who:'them', text:'周末回来吃饭吗？'},
+    {who:'them', text:'给你炖了排骨'},
+    {who:'me', text:'回！周六中午到，排骨给我留着 😋'},
+    {who:'pill', text:'管家已按你的口吻回复'}]},
+  {title:'王经理', av:'王', color:'#4A7BD0', msgs:[
+    {who:'them', text:'明早的会改到 10 点可以吗？'},
+    {who:'pill', cls:'hold', text:'涉及你的时间安排，已留给你确认'}]},
+  {title:'大学室友群(6)', av:'群', color:'#7C5CC4', msgs:[
+    {who:'them', text:'@你 下周聚餐你来不来'},
+    {who:'me', text:'来！地方你们定，我都行'},
+    {who:'pill', text:'在「直接代回」名单里，已回复'}]},
+];
+const feed = document.getElementById('feed'), title = document.getElementById('title'),
+      field = document.getElementById('field'), tag = document.getElementById('tag');
+const reduce = matchMedia('(prefers-reduced-motion: reduce)').matches;
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+
+function bubble(m, sc) {
+  if (m.who === 'pill') { const p = document.createElement('div'); p.className = 'pill enter ' + (m.cls || ''); p.textContent = m.text; return p; }
+  const d = document.createElement('div'); d.className = 'msg enter' + (m.who === 'me' ? ' me' : '');
+  const av = document.createElement('div'); av.className = 'av';
+  if (m.who === 'me') av.textContent = '我'; else { av.textContent = sc.av; av.style.background = sc.color; }
+  const b = document.createElement('div'); b.className = 'b'; b.textContent = m.text;
+  d.append(av, b); return d;
+}
+
+function staticScene() {
+  const sc = SCENES[0]; title.textContent = sc.title;
+  sc.msgs.forEach(m => feed.append(bubble(m, sc)));
+}
+
+async function play() {
+  for (let i = 0; ; i = (i + 1) % SCENES.length) {
+    const sc = SCENES[i];
+    feed.innerHTML = ''; title.textContent = sc.title; field.innerHTML = '&nbsp;'; field.classList.remove('on');
+    await sleep(500);
+    for (const m of sc.msgs) {
+      if (m.who === 'me') {
+        tag.hidden = false;
+        for (let k = 1; k <= m.text.length; k++) { field.textContent = m.text.slice(0, k); field.classList.add('on'); await sleep(70); }
+        await sleep(350); field.innerHTML = '&nbsp;'; field.classList.remove('on'); tag.hidden = true;
+      }
+      feed.append(bubble(m, sc));
+      await sleep(m.who === 'them' ? 1100 : 900);
+    }
+    await sleep(2200);
+  }
+}
+reduce ? staticScene() : play();
+</script>
+</body>
+</html>
