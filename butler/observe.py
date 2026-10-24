@@ -24,7 +24,7 @@ class Observation:
 
 
 def _ax_to_dicts(els) -> list[dict]:
-    return [{"name": e.name, "label": e.label, "value": e.value, "tag": e.tag,
+    return [{"name": e.name, "label": e.label, "value": e.value, "tag": e.tag, "traits": e.traits,
              "rect": [e.x, e.y, e.width, e.height], "dynamic": S.is_dynamic(e.tag, e.name), "source": "ax"}
             for e in els]
 

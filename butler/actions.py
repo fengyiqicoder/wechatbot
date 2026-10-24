@@ -221,7 +221,7 @@ class ActionService:
                                        if not any((x.get("name") or "") == e["name"] for x in obs.elements)]
         return {"bundle": obs.bundle, "screen_id": obs.screen_id, "screen_label": obs.screen_label,
                 "appearance": obs.appearance, "deep": obs.deep, "source": obs.source, "ax_ms": obs.ax_ms,
-                "elements": [{k: e[k] for k in ("name", "label", "value", "tag", "rect", "dynamic")} for e in merged],
+                "elements": [{**{k: e[k] for k in ("name", "label", "value", "tag", "rect", "dynamic")}, **({"traits": e["traits"]} if e.get("traits") else {})} for e in merged],
                 "text_blocks": extract.text_blocks(obs.elements), "list_items": extract.list_items(obs.elements),
                 "screenshot": self.save_shot(obs.png)}
 

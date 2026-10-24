@@ -492,7 +492,7 @@ class Ctx:
         if drv is None:
             return []
         w, h = drv.window_size()
-        return [{"tag": e.tag, "name": e.name, "label": e.label, "value": e.value, "rect": [e.x, e.y, e.width, e.height]}
+        return [{"tag": e.tag, "name": e.name, "label": e.label, "value": e.value, "traits": e.traits, "rect": [e.x, e.y, e.width, e.height]}
                 for e in parse_elements(drv.source(), hidden_within=(w, h))]
 
     def shot(self) -> str | None:

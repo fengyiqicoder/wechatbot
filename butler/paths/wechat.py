@@ -52,8 +52,14 @@ def _crash_guard(ctx: Ctx, d: dict) -> bool:
 
 
 def _tab_active(d: dict, tab: str) -> bool:
+    """选中态看 traits 里的 Selected。value 是未读角标数（实证：2 条未读时「微信」value="2"），
+    没有 traits 的旧 WDA 才退回 value=="1"。"""
     e = find(d, tab, "Button")
-    return bool(e) and (e.get("value") == "1" or e.get("value") == 1)
+    if not e:
+        return False
+    if e.get("traits"):
+        return "Selected" in e["traits"]
+    return e.get("value") in ("1", 1)
 
 
 def goto_tab(ctx: Ctx, tab: str, tries: int = 3) -> dict:

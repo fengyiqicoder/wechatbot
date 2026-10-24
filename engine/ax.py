@@ -14,6 +14,7 @@ class AXElement:
     y: int
     width: int
     height: int
+    traits: str = ""
 
     @property
     def center(self) -> tuple[int, int]:
@@ -46,6 +47,7 @@ def parse_elements(xml_source: str, hidden_within: tuple[int, int] | None = None
             label=label, name=name, value=(el.get("value") or "").strip(),
             x=int(el.get("x") or 0), y=int(el.get("y") or 0),
             width=int(el.get("width") or 0), height=int(el.get("height") or 0),
+            traits=(el.get("traits") or "").strip(),
         ))
     return out
 
